@@ -3,9 +3,9 @@ Feed in a time (consider the all the events AFTER that time)
 
 Parse the changefeed log based on that time 
 	- parse the “file path” 
-		- get the avro file to parse for (eventType, subject) 
+		- get the avro file to parse for (eventType, subject_blob) 
 
-Output: list of (eventType, subject, changefeed_avro_file) 
+Output: list of (eventType, subject_blob) 
 	- consider “subject” as way to reference the blob for LangChain
 '''
 
@@ -108,8 +108,11 @@ def main():
     start_hour_utc = start_utc_dt.replace(minute=0, second=0, microsecond=0)
     end_hour_utc = end_utc_dt.replace(minute=0, second=0, microsecond=0)
 
-    cf_events = [] # stores (event_type, blob.name)
+    '''
+    cf_events = [] # stores (event_type, subject_blob)
     event_type_blobs = defaultdict(list) # stores {event_type: [(blob.name, changefeed_avro_file), ...]}
+    '''
+    blobs_to_refresh = set()
     files_listed = 0
     files_scanned = 0
     # to get the blob path, consider https://<storage_account_name>.blob.core.windows.net/<container_name>/<blob_name>
@@ -149,14 +152,17 @@ def main():
                 event_time = parse_event_time(event['eventTime'])
                 if not (start_utc_dt <= event_time <= end_utc_dt):
                     continue
-                event_type = event['eventType']
+                #event_type = event['eventType']
                 blob_subject = event['subject']
+                blobs_to_refresh.add(blob_subject)
+                '''
                 cf_events.append((event_type, blob_subject))
                 event_type_blobs[event_type].append(blob_subject)
+                '''
                 matched_events_this_file += 1
             reader.close()
 
-            print(f'  {matched_events_this_file} events in this file. Total so far: {len(cf_events)}')
+            #print(f'  {matched_events_this_file} events in this file. Total so far: {len(cf_events)}')
     '''
     event_number = 0
     for event in cf_events:
@@ -164,17 +170,19 @@ def main():
         print(event)
         print()
         event_number += 1
-    '''
+    
 
     print()
     print('Grouped by event type:')
     for event_type, blob_subjects in event_type_blobs.items():
         print(event_type, blob_subjects)
-
+    '''
+    print(f'here are blobs that were modified between the given time: {blobs_to_refresh}')
+    
     print()
     print(f'Blobs listed: {files_listed}')
     print(f'Files scanned: {files_scanned}')
-    print(f'Total events: {len(cf_events)}')
+    #print(f'Total events: {len(cf_events)}')
     
     # look into how the LangChain side (DocLoader) handles diff event types to adjust this code
 
