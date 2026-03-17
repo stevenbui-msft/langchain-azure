@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 CONN_STR = os.getenv('CONN_STR')
 CHANGEFEED_CONTAINER = '$blobchangefeed'
 PST = timezone(timedelta(hours=-8))
-
+SUBJECT_PREFIX = '/blobServices/default/containers/'
 
 def parse_local_datetime(date_text, time_text):
     base_date = datetime.strptime(date_text, '%Y/%m/%d')
@@ -31,10 +31,6 @@ def parse_local_datetime(date_text, time_text):
     parsed_time = datetime.strptime(time_text, '%H:%M')
     parsed_dt = base_date.replace(hour=parsed_time.hour, minute=parsed_time.minute)
     return parsed_dt.replace(tzinfo=PST)
-
-
-def parse_event_time(event_time_text):
-    return datetime.fromisoformat(event_time_text.replace('Z', '+00:00'))
 
 
 def iter_changefeed_date_prefixes(cf_layout_version, start_utc_dt, end_utc_dt):
@@ -53,13 +49,12 @@ def iter_changefeed_date_prefixes(cf_layout_version, start_utc_dt, end_utc_dt):
 
 
 def parse_changefeed_blob_datetime(blob_name, cf_layout_version):
-    prefix_parts = cf_layout_version.split('/')
-    blob_parts = blob_name.split('/')
-
-    if blob_parts[:len(prefix_parts)] != prefix_parts:
+    expected_prefix = f'{cf_layout_version}/'
+    if not blob_name.startswith(expected_prefix):
         return None
 
-    remaining_parts = blob_parts[len(prefix_parts):]
+    remaining_path = blob_name[len(expected_prefix):]
+    remaining_parts = remaining_path.split('/')
     if len(remaining_parts) != 5:
         return None
 
@@ -98,6 +93,7 @@ def main():
     end_local_dt = parse_local_datetime(end_date_text, end_time_text)
     end_utc_dt = end_local_dt.astimezone(timezone.utc)
 
+    # TODO: could also support multiple containers (like a list of valid container names)
     container_filter = input('Enter container name to filter (leave blank for all containers): ').strip()
 
     if end_utc_dt < start_utc_dt:
@@ -143,20 +139,22 @@ def main():
             
             # parse the avro file
             for event in reader:
-                event_time = parse_event_time(event['eventTime'])
+                event_time = datetime.fromisoformat(event['eventTime'].replace('Z', '+00:00'))
                 if not (start_utc_dt <= event_time <= end_utc_dt):
                     continue
 
                 subject_blob_path = event['subject']
                 # sample path: /blobServices/default/containers/testcontainer/blobs/more2
                 # path in the format of /blobServices/default/containers/{CONTAINER_NAME}/blobs/{BLOB_NAME}
-                expected_prefix = '/blobServices/default/containers/'
-                if not subject_blob_path.startswith(expected_prefix):
+                if not subject_blob_path.startswith(SUBJECT_PREFIX):
                     continue
 
-                container_and_blob = subject_blob_path[len(expected_prefix):]
-                subject_blob_container_name, blob_path = container_and_blob.split('/blobs/')
-                if subject_blob_container_name == '' or blob_path == '':
+                container_and_blob = subject_blob_path[len(SUBJECT_PREFIX):]
+                split_parts = container_and_blob.split('/blobs/', 1)
+                if len(split_parts) != 2:
+                    continue
+                subject_blob_container_name, blob_path = split_parts
+                if not subject_blob_container_name or not blob_path:
                     continue
                 # if container filtering, check if this blob is even part of the container
                 if container_filter and subject_blob_container_name != container_filter:
