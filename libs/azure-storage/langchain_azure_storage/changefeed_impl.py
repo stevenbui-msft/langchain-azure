@@ -14,7 +14,6 @@ import os
 from azure.storage.blob import ContainerClient
 from avro import datafile, io
 from io import BytesIO
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 CONN_STR = os.getenv('CONN_STR')
@@ -99,6 +98,8 @@ def main():
     end_local_dt = parse_local_datetime(end_date_text, end_time_text)
     end_utc_dt = end_local_dt.astimezone(timezone.utc)
 
+    container_filter = input('Enter container name to filter (leave blank for all containers): ').strip()
+
     if end_utc_dt < start_utc_dt:
         raise ValueError('End datetime must be after start datetime.')
 
@@ -110,6 +111,11 @@ def main():
     container_client = ContainerClient.from_connection_string(CONN_STR, CHANGEFEED_CONTAINER)
 
     blobs_to_refresh = set()
+
+    if container_filter:
+        print(f'Filtering events to container: {container_filter}')
+    else:
+        print('No container filter set; including events from all containers.')
 
     print('Listing changefeed blobs only for relevant UTC date prefixes...')
     for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_hour_utc, end_hour_utc):
@@ -140,7 +146,23 @@ def main():
                 event_time = parse_event_time(event['eventTime'])
                 if not (start_utc_dt <= event_time <= end_utc_dt):
                     continue
-                blobs_to_refresh.add(event['subject'])
+
+                subject_blob_path = event['subject']
+                # sample path: /blobServices/default/containers/testcontainer/blobs/more2
+                # path in the format of /blobServices/default/containers/{CONTAINER_NAME}/blobs/{BLOB_NAME}
+                expected_prefix = '/blobServices/default/containers/'
+                if not subject_blob_path.startswith(expected_prefix):
+                    continue
+
+                container_and_blob = subject_blob_path[len(expected_prefix):]
+                subject_blob_container_name, blob_path = container_and_blob.split('/blobs/')
+                if subject_blob_container_name == '' or blob_path == '':
+                    continue
+                # if container filtering, check if this blob is even part of the container
+                if container_filter and subject_blob_container_name != container_filter:
+                    continue
+
+                blobs_to_refresh.add(blob_path)
 
             reader.close()
 
