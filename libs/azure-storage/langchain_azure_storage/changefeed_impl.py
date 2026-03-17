@@ -84,6 +84,14 @@ def parse_changefeed_blob_datetime(blob_name, cf_layout_version):
 
 def main():
 
+    '''
+    container_client = ContainerClient.from_connection_string(CONN_STR, 'testcontainer')
+    for blob in container_client.list_blobs():
+        print()
+        print(blob)
+        print()
+    '''
+
     if not CONN_STR:
         raise ValueError('CONN_STR is not set. Add it to .env and restart the terminal.')
 
@@ -117,6 +125,13 @@ def main():
     files_scanned = 0
     # to get the blob path, consider https://<storage_account_name>.blob.core.windows.net/<container_name>/<blob_name>
     container_client = ContainerClient.from_connection_string(CONN_STR, CHANGEFEED_CONTAINER)
+
+    '''
+    for blob in container_client.list_blobs():
+        print(blob.name)
+    
+    print('fu')
+    '''
 
     print('Listing changefeed blobs only for relevant UTC date prefixes...')
     for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_hour_utc, end_hour_utc):
@@ -152,9 +167,10 @@ def main():
                 event_time = parse_event_time(event['eventTime'])
                 if not (start_utc_dt <= event_time <= end_utc_dt):
                     continue
+                blobs_to_refresh.add(event['subject'])
                 #event_type = event['eventType']
-                blob_subject = event['subject']
-                blobs_to_refresh.add(blob_subject)
+                #blob_subject = event['subject']
+                #blobs_to_refresh.add((blob_subject, event_time, event_type, event['id'], avro_file))
                 '''
                 cf_events.append((event_type, blob_subject))
                 event_type_blobs[event_type].append(blob_subject)
@@ -177,12 +193,16 @@ def main():
     for event_type, blob_subjects in event_type_blobs.items():
         print(event_type, blob_subjects)
     '''
-    print(f'here are blobs that were modified between the given time: {blobs_to_refresh}')
+    #print(f'here are blobs that were modified between the given time: {blobs_to_refresh}')
     
     print()
     print(f'Blobs listed: {files_listed}')
     print(f'Files scanned: {files_scanned}')
     #print(f'Total events: {len(cf_events)}')
+
+    for blob_path in blobs_to_refresh:
+        print(blob_path)
+        print()
     
     # look into how the LangChain side (DocLoader) handles diff event types to adjust this code
 
