@@ -1,15 +1,15 @@
 '''
-Feed in a time (consider the all the events AFTER that time) 
+Feed in a time range (YYYY/MM/DD and HH:MM) in PST to convert to UTC.
 
-Parse the changefeed log based on that time 
-	- parse the “file path” 
-		- get the avro file to parse for (eventType, subject_blob) 
+Parse the Azure changefeed log based on that time range:
+	- parse file paths based on the time date prefixes
+        - if they exist,
+		    - get the 00000.avro file to parse the events for blobs_names in the file
+                - the blobs listed are the ones that were modified during the timespan
 
-Output: list of (eventType, subject_blob) 
-	- consider “subject” as way to reference the blob for LangChain
+Output: list of the modified blobs during the timespan
 '''
 
-# import libraries
 import os
 from azure.storage.blob import ContainerClient
 from avro import datafile, io
@@ -65,7 +65,7 @@ def parse_changefeed_blob_datetime(blob_name, cf_layout_version):
         return None
 
     year, month, day, utc_time, file_name = remaining_parts
-    if file_name != '00000.avro':
+    if not file_name.endswith('.avro'):
         return None
     if len(utc_time) != 4 or not utc_time.isdigit():
         return None
@@ -83,14 +83,6 @@ def parse_changefeed_blob_datetime(blob_name, cf_layout_version):
         return None
 
 def main():
-
-    '''
-    container_client = ContainerClient.from_connection_string(CONN_STR, 'testcontainer')
-    for blob in container_client.list_blobs():
-        print()
-        print(blob)
-        print()
-    '''
 
     if not CONN_STR:
         raise ValueError('CONN_STR is not set. Add it to .env and restart the terminal.')
@@ -110,39 +102,22 @@ def main():
     if end_utc_dt < start_utc_dt:
         raise ValueError('End datetime must be after start datetime.')
 
-    # /log/00/ is the change feed storage layout version
-    cf_layout_version = 'log/00'
-
     start_hour_utc = start_utc_dt.replace(minute=0, second=0, microsecond=0)
     end_hour_utc = end_utc_dt.replace(minute=0, second=0, microsecond=0)
 
-    '''
-    cf_events = [] # stores (event_type, subject_blob)
-    event_type_blobs = defaultdict(list) # stores {event_type: [(blob.name, changefeed_avro_file), ...]}
-    '''
-    blobs_to_refresh = set()
-    files_listed = 0
-    files_scanned = 0
-    # to get the blob path, consider https://<storage_account_name>.blob.core.windows.net/<container_name>/<blob_name>
+    # /log/00/ is the change feed storage layout version
+    cf_layout_version = 'log/00'
     container_client = ContainerClient.from_connection_string(CONN_STR, CHANGEFEED_CONTAINER)
 
-    '''
-    for blob in container_client.list_blobs():
-        print(blob.name)
-    
-    print('fu')
-    '''
+    blobs_to_refresh = set()
 
     print('Listing changefeed blobs only for relevant UTC date prefixes...')
     for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_hour_utc, end_hour_utc):
         print(f'Checking prefix: {date_prefix}')
         for blob in container_client.list_blobs(name_starts_with=date_prefix):
-            files_listed += 1
 
-            # Fast skip for non-target files before datetime parsing
-            if not blob.name.endswith('/00000.avro'):
+            if not blob.name.endswith('.avro'):
                 continue
-
             blob_hour_utc = parse_changefeed_blob_datetime(blob.name, cf_layout_version)
             if blob_hour_utc is None:
                 continue
@@ -151,7 +126,6 @@ def main():
             
             avro_file = blob.name
             print(f'Processing changefeed file: {avro_file}')
-            files_scanned += 1
 
             # download the changefeed Avro log file
             blob_client = container_client.get_blob_client(avro_file)
@@ -160,51 +134,21 @@ def main():
             # make avro stream
             avro_stream = BytesIO(avro_bytes)
             reader = datafile.DataFileReader(avro_stream, io.DatumReader())
-            matched_events_this_file = 0
-        
-            # assume that subject stores the reference to the blob object (adjust later)
+            
+            # parse the avro file
             for event in reader:
                 event_time = parse_event_time(event['eventTime'])
                 if not (start_utc_dt <= event_time <= end_utc_dt):
                     continue
                 blobs_to_refresh.add(event['subject'])
-                #event_type = event['eventType']
-                #blob_subject = event['subject']
-                #blobs_to_refresh.add((blob_subject, event_time, event_type, event['id'], avro_file))
-                '''
-                cf_events.append((event_type, blob_subject))
-                event_type_blobs[event_type].append(blob_subject)
-                '''
-                matched_events_this_file += 1
+
             reader.close()
-
-            #print(f'  {matched_events_this_file} events in this file. Total so far: {len(cf_events)}')
-    '''
-    event_number = 0
-    for event in cf_events:
-        print(event_number)
-        print(event)
-        print()
-        event_number += 1
-    
-
-    print()
-    print('Grouped by event type:')
-    for event_type, blob_subjects in event_type_blobs.items():
-        print(event_type, blob_subjects)
-    '''
-    #print(f'here are blobs that were modified between the given time: {blobs_to_refresh}')
-    
-    print()
-    print(f'Blobs listed: {files_listed}')
-    print(f'Files scanned: {files_scanned}')
-    #print(f'Total events: {len(cf_events)}')
 
     for blob_path in blobs_to_refresh:
         print(blob_path)
         print()
     
-    # look into how the LangChain side (DocLoader) handles diff event types to adjust this code
+    # return list(blobs_to_refresh)
 
 if __name__ == '__main__':
     main()
