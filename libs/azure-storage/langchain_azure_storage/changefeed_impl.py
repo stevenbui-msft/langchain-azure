@@ -109,7 +109,7 @@ def main():
     blobs_to_refresh = set()
 
     if container_filter:
-        print(f'Filtering events to container: {container_filter}')
+        print(f'Filtering events from container: {container_filter}')
     else:
         print('No container filter set; including events from all containers.')
 
@@ -123,6 +123,7 @@ def main():
             blob_hour_utc = parse_changefeed_blob_datetime(blob.name, cf_layout_version)
             if blob_hour_utc is None:
                 continue
+            # consider the hour valid range
             if not (start_hour_utc <= blob_hour_utc <= end_hour_utc):
                 continue
             
@@ -140,6 +141,7 @@ def main():
             # parse the avro file
             for event in reader:
                 event_time = datetime.fromisoformat(event['eventTime'].replace('Z', '+00:00'))
+                # consider the minute valid range
                 if not (start_utc_dt <= event_time <= end_utc_dt):
                     continue
 
@@ -153,14 +155,14 @@ def main():
                 split_parts = container_and_blob.split('/blobs/', 1)
                 if len(split_parts) != 2:
                     continue
-                subject_blob_container_name, blob_path = split_parts
-                if not subject_blob_container_name or not blob_path:
+                subject_blob_container_name, blob_name = split_parts
+                if not subject_blob_container_name or not blob_name:
                     continue
                 # if container filtering, check if this blob is even part of the container
                 if container_filter and subject_blob_container_name != container_filter:
                     continue
 
-                blobs_to_refresh.add(blob_path)
+                blobs_to_refresh.add(blob_name)
 
             reader.close()
 

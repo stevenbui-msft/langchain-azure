@@ -269,6 +269,16 @@ class AzureBlobStorageLoader(BaseLoader):
             ):
                 if not self._is_adls_directory(blob):
                     yield blob.name
+            '''
+            for blob in get_changed_blobs(container_client.container_name):
+                if not self._is_adls_directory(blob):
+                        yield blob.name
+            '''
+    
+    '''
+    def get_changed_blobs(container_client.container_name: str) -> ???
+        [changefeed implementation]
+    '''
 
     async def _ayield_blob_names(
         self, async_container_client: AsyncContainerClient
