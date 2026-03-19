@@ -140,6 +140,13 @@ def main():
             
             # parse the avro file
             for event in reader:
+                
+                # eventType filtering (we only want BlobCreated and BlobPropertiesUpdated)
+                eventType = event['eventType']
+                if (eventType == 'BlobDeleted' or eventType == 'BlobSnapshotCreated' or
+                    eventType == 'BlobAsyncOperationInitiated' or eventType == 'BlobTierChanged'):
+                    continue
+
                 event_time = datetime.fromisoformat(event['eventTime'].replace('Z', '+00:00'))
                 # consider the minute valid range
                 if not (start_utc_dt <= event_time <= end_utc_dt):
