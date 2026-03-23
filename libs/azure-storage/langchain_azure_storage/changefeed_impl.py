@@ -141,11 +141,19 @@ def main():
             # parse the avro file
             for event in reader:
                 
-                # eventType filtering (we only want BlobCreated and BlobPropertiesUpdated)
+                # eventType filtering (only want BlobCreated and BlobPropertiesUpdated)
+                # also deal with BlobDeleted
                 eventType = event['eventType']
-                if (eventType == 'BlobDeleted' or eventType == 'BlobSnapshotCreated' or
-                    eventType == 'BlobAsyncOperationInitiated' or eventType == 'BlobTierChanged'):
+                if eventType == 'BlobAsyncOperationInitiated':
+                    print('BlobAsyncOperationInitiated.')
                     continue
+                if not (eventType == 'BlobCreated' or eventType == 'BlobPropertiesUpdated' or eventType == 'BlobDeleted'):
+                    continue
+                '''
+                if (eventType == 'BlobDeleted' or eventType == 'BlobSnapshotCreated' or
+                    eventType == 'BlobTierChanged' or eventType == 'Control'):
+                    continue
+                '''
 
                 event_time = datetime.fromisoformat(event['eventTime'].replace('Z', '+00:00'))
                 # consider the minute valid range
@@ -168,6 +176,12 @@ def main():
                 # if container filtering, check if this blob is even part of the container
                 if container_filter and subject_blob_container_name != container_filter:
                     continue
+                
+                # remove deleted blobs if it's in the list of blob to refresh
+                if eventType == 'BlobDeleted':
+                    if blob_name in blobs_to_refresh:
+                        blobs_to_refresh.remove(blob_name)
+                        continue
 
                 blobs_to_refresh.add(blob_name)
 
