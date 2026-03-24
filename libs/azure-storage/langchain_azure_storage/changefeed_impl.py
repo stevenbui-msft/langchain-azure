@@ -181,7 +181,7 @@ def main():
                 if eventType == 'BlobDeleted':
                     if blob_name in blobs_to_refresh:
                         blobs_to_refresh.remove(blob_name)
-                        continue
+                    continue
 
                 blobs_to_refresh.add(blob_name)
 
