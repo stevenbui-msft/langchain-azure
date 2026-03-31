@@ -35,6 +35,9 @@ _SDK_CREDENTIAL_TYPE = Optional[
     ]
 ]
 
+# CHANGEFEED PROGRAM IMPORT
+from langchain_azure_storage.changefeed import main as changefeed_blobs_to_refresh
+
 
 @beta(
     message=(
@@ -260,7 +263,12 @@ class AzureBlobStorageLoader(BaseLoader):
         else:
             yield provided_credential
 
+    # use the changefeed parser to fetch a set of blob_names:str
+    def get_changed_blobs(loader_container_name: str) -> set[str]:
+        return changefeed_blobs_to_refresh(loader_container_name)
+
     def _yield_blob_names(self, container_client: ContainerClient) -> Iterator[str]:
+        #'''
         if self._blob_names is not None:
             yield from self._blob_names
         else:
@@ -269,16 +277,37 @@ class AzureBlobStorageLoader(BaseLoader):
             ):
                 if not self._is_adls_directory(blob):
                     yield blob.name
-            '''
-            for blob in get_changed_blobs(container_client.container_name):
+        '''
+        elif FLAG:
+            # i could use some refresh flag (CONSIDER AN OPTIONAL PARAMTER IN THE LOADER INITIALIZATION)
+            #   -> if initial load,
+            #           continue as normal
+            #   -> if reloading,
+            #           consider changefeed logs to see what to refresh
+            # CONSIDER CHANGEFEED MODIFICATION BELOW
+            for blob in self.get_changed_blobs(container_client.container_name):
                 if not self._is_adls_directory(blob):
-                        yield blob.name
-            '''
+                    yield blob.name
+        
+        else:
+            for blob in container_client.list_blobs(
+                name_starts_with=self._prefix, include="metadata"
+            ):
+                if not self._is_adls_directory(blob):
+                    yield blob.name
+        '''
+        '''
+        # i could use some refresh flag
+        #   -> if initial load,
+        #           continue as normal
+        #   -> if reloading,
+        #           consider changefeed logs to see what to refresh
+        # CONSIDER CHANGEFEED MODIFICATION BELOW
+        for blob in self.get_changed_blobs(container_client.container_name):
+            if not self._is_adls_directory(blob):
+                yield blob.name
+        '''
     
-    '''
-    def get_changed_blobs(container_client.container_name: str) -> ???
-        [changefeed implementation]
-    '''
 
     async def _ayield_blob_names(
         self, async_container_client: AsyncContainerClient

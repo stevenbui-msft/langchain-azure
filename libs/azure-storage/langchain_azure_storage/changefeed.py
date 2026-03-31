@@ -76,6 +76,7 @@ def parse_changefeed_blob_datetime(blob_name, cf_layout_version):
     except ValueError:
         return None
 
+#def main(LOADER_CONTAINER):
 def main():
 
     if not CONN_STR:
@@ -93,8 +94,8 @@ def main():
     end_local_dt = parse_local_datetime(end_date_text, end_time_text)
     end_utc_dt = end_local_dt.astimezone(timezone.utc)
 
-    # TODO: could also support multiple containers (like a list of valid container names)
-    container_filter = input('Enter container name to filter (leave blank for all containers): ').strip()
+    #container_filter = LOADER_CONTAINER
+    container_filter = 'testcontainer'
 
     if end_utc_dt < start_utc_dt:
         raise ValueError('End datetime must be after start datetime.')
@@ -107,11 +108,6 @@ def main():
     container_client = ContainerClient.from_connection_string(CONN_STR, CHANGEFEED_CONTAINER)
 
     blobs_to_refresh = set()
-
-    if container_filter:
-        print(f'Filtering events from container: {container_filter}')
-    else:
-        print('No container filter set; including events from all containers.')
 
     print('Listing changefeed blobs only for relevant UTC date prefixes...')
     for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_hour_utc, end_hour_utc):
