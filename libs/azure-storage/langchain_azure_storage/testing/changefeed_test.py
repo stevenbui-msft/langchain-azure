@@ -1,13 +1,26 @@
 '''
-Feed in a time range (YYYY/MM/DD and HH:MM) in PST to convert to UTC.
+    blob log (from 4/7/2026 in PT within 'testcontainer' container)
+    - 9:23:09am "make1" blob created
+    - 9:27:48am "make1" blob deleted
+    - 9:38:42am "make1" blob created
+    - 9:44:52am "make1" blob modified
 
-Parse the Azure changefeed log based on that time range:
-	- parse file paths based on the time date prefixes
-        - if they exist,
-		    - get the 00000.avro file to parse the events for blobs_names in the file
-                - the blobs listed are the ones that were modified during the timespan
+    BASIC TEST CASES:
 
-Output: list of the modified blobs during the timespan
+        - Created
+            - check from 9:00 - 9:25, expected: blobs_to_refresh = ['make1'], blobs_deleted = []
+
+        - Created and deleted in [start, end]
+            - check from 9:00 - 9:30, expected: blobs_to_refresh = [], blobs_deleted = []
+
+        - Created, deleted, created again in [start, end]
+            - check from 9:00 - 9:40, expected: blobs_to_refresh = ['make1'], blobs_deleted = []
+
+        - Created outside of [start, end], but we read DELETED inside [start, end]
+            - check from 9:25 - 9:30, expected: blobs_to_refresh = [], blobs_deleted = ['make1']
+
+        - BlobPropertiesUpdated event
+            - check from 9:40 - 9:50, expected: blobs_to_refresh = ['make1'], blobs_deleted = []
 '''
 
 import os

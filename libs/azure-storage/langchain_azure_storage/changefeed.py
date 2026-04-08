@@ -15,22 +15,33 @@ from azure.storage.blob import ContainerClient
 from avro import datafile, io
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 CONN_STR = os.getenv('CONN_STR')
 CHANGEFEED_CONTAINER = '$blobchangefeed'
-PST = timezone(timedelta(hours=-8))
 SUBJECT_PREFIX = '/blobServices/default/containers/'
+
+
+def get_local_pt_timezone():
+    try:
+        return ZoneInfo('America/Los_Angeles')
+    except ZoneInfoNotFoundError:
+        # Fallback for environments without IANA tz data.
+        return timezone(timedelta(hours=-8))
+
+
+PT = get_local_pt_timezone()
 
 def parse_local_datetime(date_text, time_text):
     base_date = datetime.strptime(date_text, '%Y/%m/%d')
 
     if time_text == '24:00':
         parsed_dt = base_date + timedelta(days=1)
-        return parsed_dt.replace(tzinfo=PST)
+        return parsed_dt.replace(tzinfo=PT)
 
     parsed_time = datetime.strptime(time_text, '%H:%M')
     parsed_dt = base_date.replace(hour=parsed_time.hour, minute=parsed_time.minute)
-    return parsed_dt.replace(tzinfo=PST)
+    return parsed_dt.replace(tzinfo=PT)
 
 
 def iter_changefeed_date_prefixes(cf_layout_version, start_utc_dt, end_utc_dt):
@@ -84,13 +95,13 @@ def main():
 
     # start time
     start_date_text = input('Enter the start date (YYYY/MM/DD): ')
-    start_time_text = input('Enter the start time (HH:MM) in PST: ')
+    start_time_text = input('Enter the start time (HH:MM) in PT: ')
     start_local_dt = parse_local_datetime(start_date_text, start_time_text)
     start_utc_dt = start_local_dt.astimezone(timezone.utc)
 
     # end time
     end_date_text = input('Enter the end date (YYYY/MM/DD): ')
-    end_time_text = input('Enter the end time (HH:MM) in PST: ')
+    end_time_text = input('Enter the end time (HH:MM) in PT: ')
     end_local_dt = parse_local_datetime(end_date_text, end_time_text)
     end_utc_dt = end_local_dt.astimezone(timezone.utc)
 
@@ -108,6 +119,7 @@ def main():
     container_client = ContainerClient.from_connection_string(CONN_STR, CHANGEFEED_CONTAINER)
 
     blobs_to_refresh = set()
+    blobs_deleted = set()
 
     print('Listing changefeed blobs only for relevant UTC date prefixes...')
     for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_hour_utc, end_hour_utc):
@@ -177,7 +189,29 @@ def main():
                 if eventType == 'BlobDeleted':
                     if blob_name in blobs_to_refresh:
                         blobs_to_refresh.remove(blob_name)
-                    continue
+                    else:
+                        blobs_deleted.add(blob_name)
+                    
+                    #else:.....
+                    # we can use the info for something liek deleting form vector store
+                    # STORE A LIST OF THESE BLOBS
+
+                '''
+                steven 12:00
+                vincent 13:00 (deleted 14:00)
+
+                {created, deleted} in same time frame
+                
+                {created} {deleted}
+
+                right now, it's do nothing
+                we would want to know what got FULL DELETED
+                    -> store list of these
+
+                CURRENTLY: RELOAD existing blobs
+                SUPPORT: 
+
+                '''
 
                 blobs_to_refresh.add(blob_name)
 
@@ -186,7 +220,12 @@ def main():
     for blob_path in blobs_to_refresh:
         print(blob_path)
         print()
+    for blob_name in blobs_deleted:
+        print(blob_name)
     '''
+    print("BLOBS DELETED\n")
+    for blob_name in blobs_deleted:
+        print(blob_name)
 
     return blobs_to_refresh
 

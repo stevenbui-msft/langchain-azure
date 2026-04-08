@@ -60,6 +60,9 @@ class AzureBlobStorageLoader(BaseLoader):
         prefix: Optional[str] = None,
         credential: _SDK_CREDENTIAL_TYPE = None,
         loader_factory: Optional[Callable[[str], BaseLoader]] = None,
+        # start and end optional parameters for changefeed
+        start: Optional[str],
+        end: Optional[str]
     ):
         """Initialize `AzureBlobStorageLoader`.
 
@@ -78,6 +81,13 @@ class AzureBlobStorageLoader(BaseLoader):
                 the blob contents will be downloaded to a temporary file whose name
                 gets passed to the callable. If `None`, content will be returned as a
                 single `Document` with UTF-8 text.
+
+            start: Optional parameter for the start of the date range the loader should consider.
+                    if provided, required 'end' parameter to also be passed.
+                    valid date should be in the format "MM/DD/YYYY" and before 'end' date
+            end: Optional parameter for the end of the date range the loader should consider.
+                    if provided, required 'start' parameter to also be passed.
+                    valid date should be in the format "MM/DD/YYYY" and after 'start' date
         """
         self._account_url = account_url
         self._container_name = container_name
@@ -93,6 +103,15 @@ class AzureBlobStorageLoader(BaseLoader):
             raise TypeError("Invalid credential type provided.")
 
         self._loader_factory = loader_factory
+
+        #if start and not end or end and not start
+        if start and not end:
+            raise Exception("missing end parameter")
+        elif end and not start:
+            raise Exception("missing start parameter")
+
+        self.start = start
+        self.end = end
 
     def lazy_load(self) -> Iterator[Document]:
         """Lazily load documents from Azure Blob Storage.
@@ -264,50 +283,22 @@ class AzureBlobStorageLoader(BaseLoader):
             yield provided_credential
 
     # use the changefeed parser to fetch a set of blob_names:str
-    def get_changed_blobs(loader_container_name: str) -> set[str]:
-        return changefeed_blobs_to_refresh(loader_container_name)
+    def get_changed_blobs(self, loader_container_name: str) -> set[str]:
+        return changefeed_blobs_to_refresh(loader_container_name, self.start, self.end)
 
     def _yield_blob_names(self, container_client: ContainerClient) -> Iterator[str]:
-        #'''
         if self._blob_names is not None:
             yield from self._blob_names
+        elif self.start and self.end:
+            for blob in self.get_changed_blobs(container_client.container_name, self.start, self.end):
+                if not self._is_adls_directory(blob):
+                    yield blob.name
         else:
             for blob in container_client.list_blobs(
                 name_starts_with=self._prefix, include="metadata"
             ):
                 if not self._is_adls_directory(blob):
                     yield blob.name
-        '''
-        elif FLAG:
-            # i could use some refresh flag (CONSIDER AN OPTIONAL PARAMTER IN THE LOADER INITIALIZATION)
-            #   -> if initial load,
-            #           continue as normal
-            #   -> if reloading,
-            #           consider changefeed logs to see what to refresh
-            # CONSIDER CHANGEFEED MODIFICATION BELOW
-            for blob in self.get_changed_blobs(container_client.container_name):
-                if not self._is_adls_directory(blob):
-                    yield blob.name
-        
-        else:
-            for blob in container_client.list_blobs(
-                name_starts_with=self._prefix, include="metadata"
-            ):
-                if not self._is_adls_directory(blob):
-                    yield blob.name
-        '''
-        '''
-        # i could use some refresh flag
-        #   -> if initial load,
-        #           continue as normal
-        #   -> if reloading,
-        #           consider changefeed logs to see what to refresh
-        # CONSIDER CHANGEFEED MODIFICATION BELOW
-        for blob in self.get_changed_blobs(container_client.container_name):
-            if not self._is_adls_directory(blob):
-                yield blob.name
-        '''
-    
 
     async def _ayield_blob_names(
         self, async_container_client: AsyncContainerClient
@@ -315,6 +306,10 @@ class AzureBlobStorageLoader(BaseLoader):
         if self._blob_names is not None:
             for blob_name in self._blob_names:
                 yield blob_name
+        elif self.start and self.end:
+            for blob in self.get_changed_blobs(async_container_client.container_name, self.start, self.end):
+                if not self._is_adls_directory(blob):
+                    yield blob.name
         else:
             async for blob in async_container_client.list_blobs(
                 name_starts_with=self._prefix, include="metadata"
