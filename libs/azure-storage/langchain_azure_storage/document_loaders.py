@@ -61,8 +61,10 @@ class AzureBlobStorageLoader(BaseLoader):
         credential: _SDK_CREDENTIAL_TYPE = None,
         loader_factory: Optional[Callable[[str], BaseLoader]] = None,
         # start and end optional parameters for changefeed
-        start: Optional[str],
-        end: Optional[str]
+        start_date: Optional[str],
+        start_time: Optional[str],
+        end_date: Optional[str],
+        end_time: Optional[str]
     ):
         """Initialize `AzureBlobStorageLoader`.
 
@@ -82,12 +84,18 @@ class AzureBlobStorageLoader(BaseLoader):
                 gets passed to the callable. If `None`, content will be returned as a
                 single `Document` with UTF-8 text.
 
-            start: Optional parameter for the start of the date range the loader should consider.
+            start_date: Optional parameter for the start of the date range the loader should consider.
                     if provided, required 'end' parameter to also be passed.
                     valid date should be in the format "MM/DD/YYYY" and before 'end' date
+            start_time: Optional parameter for the end of the time range the loader should consider.
+                    if provided, required 'end_time' parameter to also be passed.
+                    valid time should be in the format "HH:MM" and after 'start' time
             end: Optional parameter for the end of the date range the loader should consider.
                     if provided, required 'start' parameter to also be passed.
                     valid date should be in the format "MM/DD/YYYY" and after 'start' date
+            end_time: Optional parameter for the end of the time range the loader should consider.
+                    if provided, required 'start_time' parameter to also be passed.
+                    valid date should be in the format "HH:MM" and after 'start' time
         """
         self._account_url = account_url
         self._container_name = container_name
@@ -104,14 +112,21 @@ class AzureBlobStorageLoader(BaseLoader):
 
         self._loader_factory = loader_factory
 
-        #if start and not end or end and not start
-        if start and not end:
-            raise Exception("missing end parameter")
-        elif end and not start:
-            raise Exception("missing start parameter")
+        if start_date and not end_date:
+            raise ValueError("missing end_date parameter")
+        elif end_date and not start_date:
+            raise ValueError("missing start_date parameter")
+        
+        if start_date and end_date:
+            if start_time and not end_time: 
+                raise ValueError("missing end_time parameter")
+            elif end_time and not start_time:
+                raise ValueError("missing start_time parameter")
 
-        self.start = start
-        self.end = end
+        self.start_date = start_date
+        self.start_time = start_time
+        self.end_date = end_date
+        self.end_time = end_time
 
     def lazy_load(self) -> Iterator[Document]:
         """Lazily load documents from Azure Blob Storage.
@@ -284,7 +299,7 @@ class AzureBlobStorageLoader(BaseLoader):
 
     # use the changefeed parser to fetch a set of blob_names:str
     def get_changed_blobs(self, loader_container_name: str) -> set[str]:
-        return changefeed_blobs_to_refresh(loader_container_name, self.start, self.end)
+        return changefeed_blobs_to_refresh(loader_container_name, self.start_date, self.start_time, self.end_date, self.end_time)
 
     def _yield_blob_names(self, container_client: ContainerClient) -> Iterator[str]:
         if self._blob_names is not None:
