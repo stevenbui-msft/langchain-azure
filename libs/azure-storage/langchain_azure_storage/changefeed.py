@@ -36,7 +36,6 @@ def parse_local_datetime(date_text, time_text):
     try:
         return naive_dt.replace(tzinfo=ZoneInfo('America/Los_Angeles'))
     except ZoneInfoNotFoundError:
-        # Windows may not have IANA tz data. Use a small US-DST fallback.
         year = naive_dt.year
         march_first = datetime(year, 3, 1)
         november_first = datetime(year, 11, 1)

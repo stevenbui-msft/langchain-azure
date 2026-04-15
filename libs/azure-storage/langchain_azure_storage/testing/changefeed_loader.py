@@ -34,6 +34,7 @@ def main():
         end_time='23:59')
 
     # test what lazy load returns!
+    print("===== BLOBS IN THE LOADER =====")
     for doc in loader.lazy_load():
         print(doc.page_content)
     
