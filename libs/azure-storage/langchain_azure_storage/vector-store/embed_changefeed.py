@@ -74,6 +74,10 @@ def main() -> None:
         prefix=os.environ.get("AZURE_STORAGE_BLOB_PREFIX"),
         credential=_AZURE_CREDENTIAL,
         loader_factory=PyPDFLoader,
+        start_date='2026/04/21',
+        start_time='08:30',
+        end_date='2026/04/21',
+        end_time='23:59'
     )
 
     docs = []

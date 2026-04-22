@@ -144,9 +144,11 @@ def main(container_name, start_date_text, start_time_text, end_date_text, end_ti
             reader.close()
 
     print("===== BLOBS DELETED =====")
-    for blob_name in blobs_deleted:
-        print(blob_name)
-
+    if blobs_deleted:
+        print(f"List of Blobs that were deleted: {list(blobs_deleted)}")
+    else:
+        print("No blobs were deleted in the inputted time frame.")
+        
     return blobs_to_refresh
 
 if __name__ == '__main__':

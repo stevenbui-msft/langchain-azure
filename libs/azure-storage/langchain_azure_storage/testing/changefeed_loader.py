@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 #from langchain_azure_storage.changefeed import main as changefeed_blobs_to_refresh
 from langchain_azure_storage.document_loaders import AzureBlobStorageLoader
 
-# python -m langchain_azure_storage.testing.sample_loader  
+# python -m langchain_azure_storage.testing.changefeed_loader  
 
 def main():
 
