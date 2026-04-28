@@ -8,7 +8,13 @@ from langchain_core.tools.base import BaseTool, BaseToolkit
 from langchain_azure_ai._resources import AIServicesService
 
 if TYPE_CHECKING:
-    from langchain_azure_ai.tools.image_gen import OpenAIModelImageGenTool
+    from langchain_azure_ai.tools._openai_tools import (
+        AzureOpenAIModelImageGenTool,
+        AzureOpenAITranscriptionsTool,
+        ImageGenerationInput,
+        SpeechToTextInput,
+    )
+    from langchain_azure_ai.tools._toolbox import AzureAIProjectToolbox
     from langchain_azure_ai.tools.logic_apps import AzureLogicAppTool
     from langchain_azure_ai.tools.services.content_understanding import (
         AzureAIContentUnderstandingTool,
@@ -19,8 +25,14 @@ if TYPE_CHECKING:
     from langchain_azure_ai.tools.services.image_analysis import (
         AzureAIImageAnalysisTool,
     )
+    from langchain_azure_ai.tools.services.speech_to_text import (
+        AzureAISpeechToTextTool,
+    )
     from langchain_azure_ai.tools.services.text_analytics_health import (
         AzureAITextAnalyticsHealthTool,
+    )
+    from langchain_azure_ai.tools.services.text_to_speech import (
+        AzureAITextToSpeechTool,
     )
 
 # Mapping of lazy-loaded symbol names to their module paths
@@ -32,11 +44,17 @@ _MODULE_MAP = {
         "langchain_azure_ai.tools.services.document_intelligence"
     ),
     "AzureAIImageAnalysisTool": "langchain_azure_ai.tools.services.image_analysis",
+    "AzureAISpeechToTextTool": ("langchain_azure_ai.tools.services.speech_to_text"),
+    "AzureAITextToSpeechTool": ("langchain_azure_ai.tools.services.text_to_speech"),
     "AzureAITextAnalyticsHealthTool": (
         "langchain_azure_ai.tools.services.text_analytics_health"
     ),
-    "OpenAIModelImageGenTool": "langchain_azure_ai.tools.image_gen",
+    "AzureOpenAIModelImageGenTool": "langchain_azure_ai.tools._openai_tools",
+    "AzureOpenAITranscriptionsTool": "langchain_azure_ai.tools._openai_tools",
+    "ImageGenerationInput": "langchain_azure_ai.tools._openai_tools",
+    "SpeechToTextInput": "langchain_azure_ai.tools._openai_tools",
     "AzureLogicAppTool": "langchain_azure_ai.tools.logic_apps",
+    "AzureAIProjectToolbox": "langchain_azure_ai.tools._toolbox",
 }
 
 # Re-export the builtin subpackage so ``from langchain_azure_ai.tools import builtin``
@@ -51,7 +69,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class AIServicesToolkit(BaseToolkit, AIServicesService):
+class AzureAIServicesToolkit(BaseToolkit, AIServicesService):
     """Toolkit for Azure AI Services."""
 
     def get_tools(self) -> List[BaseTool]:
@@ -65,11 +83,17 @@ class AIServicesToolkit(BaseToolkit, AIServicesService):
         from langchain_azure_ai.tools.services.image_analysis import (
             AzureAIImageAnalysisTool,
         )
+        from langchain_azure_ai.tools.services.speech_to_text import (
+            AzureAISpeechToTextTool,
+        )
         from langchain_azure_ai.tools.services.text_analytics_health import (
             AzureAITextAnalyticsHealthTool,
         )
+        from langchain_azure_ai.tools.services.text_to_speech import (
+            AzureAITextToSpeechTool,
+        )
 
-        return [
+        tools: List[BaseTool] = [
             AzureAIContentUnderstandingTool(
                 endpoint=self.endpoint,
                 credential=self.credential,
@@ -85,20 +109,35 @@ class AIServicesToolkit(BaseToolkit, AIServicesService):
                 credential=self.credential,
                 api_version=self.api_version,
             ),
+            AzureAISpeechToTextTool(
+                endpoint=self.endpoint,
+                credential=self.credential,
+            ),
+            AzureAITextToSpeechTool(
+                endpoint=self.endpoint,
+                credential=self.credential,
+            ),
             AzureAITextAnalyticsHealthTool(
                 endpoint=self.endpoint,
                 credential=self.credential,
                 api_version=self.api_version,
             ),
         ]
+        return tools
 
 
 __all__ = [
+    "AzureAIProjectToolbox",
     "AzureAIContentUnderstandingTool",
     "AzureAIDocumentIntelligenceTool",
     "AzureAIImageAnalysisTool",
+    "AzureAISpeechToTextTool",
+    "AzureAITextToSpeechTool",
     "AzureAITextAnalyticsHealthTool",
-    "AIServicesToolkit",
+    "AzureAIServicesToolkit",
     "AzureLogicAppTool",
-    "OpenAIModelImageGenTool",
+    "AzureOpenAIModelImageGenTool",
+    "AzureOpenAITranscriptionsTool",
+    "ImageGenerationInput",
+    "SpeechToTextInput",
 ]

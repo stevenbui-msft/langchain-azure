@@ -135,7 +135,48 @@ You're not a genius and you don't love programming!
 ```
 
 
+### Auto tracing to Azure Application Insights
+
+To trace your LangChain / LangGraph applications with Azure Application Insights, first install the OpenTelemetry extras:
+
+```bash
+pip install -U langchain-azure-ai[opentelemetry]
+```
+
+Then enable auto tracing in your application. Every `BaseCallbackManager` and LangGraph callback manager created after this call will automatically include the Azure tracer:
+
+```python
+from langchain_azure_ai.callbacks.tracers import enable_auto_tracing
+
+enable_auto_tracing(
+    connection_string="<your-application-insights-connection-string>",
+    auto_configure_azure_monitor=True,
+    enable_content_recording=False,      # set to True to capture message payloads
+    provider_name="azure.ai.openai",
+    trace_all_langgraph_nodes=True,
+)
+```
+
+For a complete end-to-end example, see [`samples/enable_auto_tracing_appinsights.py`](../../samples/enable_auto_tracing_appinsights.py).
+
+
 ## Changelog
+
+- **1.2.3**:
+
+  - **[NEW]** We introduced `AzureAIProjectToolbox` for accessing tools managed in Azure AI Foundry projects, simplifying tool configuration and management. [#525](https://github.com/langchain-ai/langchain-azure/pull/525)
+  - **[NEW]** We migrated speech-to-text tool for Azure AI from the community package, enabling speech integration capabilities. [#499](https://github.com/langchain-ai/langchain-azure/pull/499)
+  - We updated `AzureAIOpenTelemetryTracer` to emit OpenTelemetry spec-compliant spans for GenAI operations. [#509](https://github.com/langchain-ai/langchain-azure/pull/509)
+  - We patched 21 security alerts across dependency packages including `langsmith`, `cryptography`, `langchain-core`, and dev dependencies to improve package security posture. [#496](https://github.com/langchain-ai/langchain-azure/pull/496)
+
+- **1.2.2**:
+
+  - We introduced `context_extractor` support across content safety middleware classes, so you can control how content is extracted from agent state before safety checks run. [#419](https://github.com/langchain-ai/langchain-azure/pull/419)
+  - We introduced `context_extractor` support for `AzureGroundednessMiddleware` and added a notebook example for easier adoption. [#410](https://github.com/langchain-ai/langchain-azure/pull/410)
+  - We changed the default implementation of `init_chat_model("azure_ai:<your-model>")` to use the OpenAI Responses API path for improved compatibility with modern LangChain chat model initialization. [#409](https://github.com/langchain-ai/langchain-azure/pull/409)
+  - We fixed an `AttributeError` in `AzureAIOpenTelemetryTracer.on_chain_start` when chain inputs were not dictionaries. [#317](https://github.com/langchain-ai/langchain-azure/pull/317)
+  - We upgraded the `requests` dependency for this package to include upstream security and maintenance updates. [#417](https://github.com/langchain-ai/langchain-azure/pull/417)
+  - We patched multiple high-severity dependency vulnerabilities (including `PyJWT`, `orjson`, and `tornado`) to improve package security posture. [#412](https://github.com/langchain-ai/langchain-azure/pull/412)
 
 - **1.2.1**:
 
