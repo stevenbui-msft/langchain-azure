@@ -60,7 +60,6 @@ class AzureBlobStorageLoader(BaseLoader):
         prefix: Optional[str] = None,
         credential: _SDK_CREDENTIAL_TYPE = None,
         loader_factory: Optional[Callable[[str], BaseLoader]] = None,
-        # start and end optional parameters for changefeed
         start_date: Optional[str] = None,
         start_time: Optional[str] = None,
         end_date: Optional[str] = None,
