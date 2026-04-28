@@ -62,7 +62,7 @@ def main() -> None:
     azure_search = AzureSearch(
         azure_search_endpoint=os.environ["AZURE_AI_SEARCH_ENDPOINT"],
         azure_search_key=_SEARCH_KEY,
-        azure_credential=None if _SEARCH_KEY else _AZURE_CREDENTIAL,
+        azurSe_credential=None if _SEARCH_KEY else _AZURE_CREDENTIAL,
         additional_search_client_options=_COGNITIVE_CREDENTIAL_SCOPES,
         index_name=os.environ.get("AZURE_AI_SEARCH_INDEX_NAME", "demo-documents"),
         embedding_function=embed_model,
@@ -70,12 +70,12 @@ def main() -> None:
 
     loader = AzureBlobStorageLoader(
         account_url=os.environ["AZURE_STORAGE_ACCOUNT_URL"],
-        container_name=os.environ["AZURE_STORAGE_CONTAINER_NAME"],
-        prefix=os.environ.get("AZURE_STORAGE_BLOB_PREFIX"),
+        container_name='animals',
+        prefix=None,
         credential=_AZURE_CREDENTIAL,
         loader_factory=PyPDFLoader,
         start_date='2026/04/21',
-        start_time='08:30',
+        start_time='08:00',
         end_date='2026/04/21',
         end_time='23:59'
     )
