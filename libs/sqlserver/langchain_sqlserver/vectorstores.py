@@ -425,7 +425,6 @@ class SQLServer_VectorStore(VectorStore):
         try:
             with Session(self._bind) as session:
                 result = session.scalar(text(SERVER_JSON_CHECK_QUERY))
-                session.close()
 
                 if result is not None:
 
@@ -1341,7 +1340,7 @@ class SQLServer_VectorStore(VectorStore):
         cargs: List[str],
         cparams: MutableMapping[str, Any],
     ) -> None:
-        """Function to retreive access token for connection.
+        """Function to retrieve access token for connection.
 
         Get token for SQLServer connection from token URL,
         and use the token to connect to the database.

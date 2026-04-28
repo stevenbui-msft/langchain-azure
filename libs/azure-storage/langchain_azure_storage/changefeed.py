@@ -7,6 +7,8 @@ Parse the Azure changefeed log based on that time range:
 		    - get the 00000.avro file to parse the events for blobs_names in the file
                 - the blobs listed are the ones that were modified during the timespan
 
+Logs and prints list of blobs deleted during timespan (for future handling of blob_deletion in vector store)       
+
 Output: list of the modified blobs during the timespan
 '''
 
@@ -15,22 +17,34 @@ from azure.storage.blob import ContainerClient
 from avro import datafile, io
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 CONN_STR = os.getenv('CONN_STR')
 CHANGEFEED_CONTAINER = '$blobchangefeed'
-PST = timezone(timedelta(hours=-8))
 SUBJECT_PREFIX = '/blobServices/default/containers/'
 
+
 def parse_local_datetime(date_text, time_text):
-    base_date = datetime.strptime(date_text, '%Y/%m/%d')
-
+    local_date = datetime.strptime(date_text, '%Y/%m/%d')
     if time_text == '24:00':
-        parsed_dt = base_date + timedelta(days=1)
-        return parsed_dt.replace(tzinfo=PST)
+        local_date = local_date + timedelta(days=1)
+        naive_dt = local_date.replace(hour=0, minute=0)
+    else:
+        parsed_time = datetime.strptime(time_text, '%H:%M')
+        naive_dt = local_date.replace(hour=parsed_time.hour, minute=parsed_time.minute)
 
-    parsed_time = datetime.strptime(time_text, '%H:%M')
-    parsed_dt = base_date.replace(hour=parsed_time.hour, minute=parsed_time.minute)
-    return parsed_dt.replace(tzinfo=PST)
+    try:
+        return naive_dt.replace(tzinfo=ZoneInfo('America/Los_Angeles'))
+    except ZoneInfoNotFoundError:
+        year = naive_dt.year
+        march_first = datetime(year, 3, 1)
+        november_first = datetime(year, 11, 1)
+        second_sunday_march_day = 1 + ((6 - march_first.weekday()) % 7) + 7
+        first_sunday_november_day = 1 + ((6 - november_first.weekday()) % 7)
+        dst_start = datetime(year, 3, second_sunday_march_day, 2, 0)
+        dst_end = datetime(year, 11, first_sunday_november_day, 2, 0)
+        offset_hours = -7 if dst_start <= naive_dt < dst_end else -8
+        return naive_dt.replace(tzinfo=timezone(timedelta(hours=offset_hours)))
 
 
 def iter_changefeed_date_prefixes(cf_layout_version, start_utc_dt, end_utc_dt):
@@ -48,108 +62,51 @@ def iter_changefeed_date_prefixes(cf_layout_version, start_utc_dt, end_utc_dt):
         current_date_utc += timedelta(days=1)
 
 
-def parse_changefeed_blob_datetime(blob_name, cf_layout_version):
-    expected_prefix = f'{cf_layout_version}/'
-    if not blob_name.startswith(expected_prefix):
-        return None
-
-    remaining_path = blob_name[len(expected_prefix):]
-    remaining_parts = remaining_path.split('/')
-    if len(remaining_parts) != 5:
-        return None
-
-    year, month, day, utc_time, file_name = remaining_parts
-    if not file_name.endswith('.avro'):
-        return None
-    if len(utc_time) != 4 or not utc_time.isdigit():
-        return None
-
-    try:
-        return datetime(
-            int(year),
-            int(month),
-            int(day),
-            int(utc_time[:2]),
-            0,
-            tzinfo=timezone.utc,
-        )
-    except ValueError:
-        return None
-
-#def main(LOADER_CONTAINER):
-def main():
+def main(container_name, start_date_text, start_time_text, end_date_text, end_time_text):
 
     if not CONN_STR:
         raise ValueError('CONN_STR is not set. Add it to .env and restart the terminal.')
 
     # start time
-    start_date_text = input('Enter the start date (YYYY/MM/DD): ')
-    start_time_text = input('Enter the start time (HH:MM) in PST: ')
     start_local_dt = parse_local_datetime(start_date_text, start_time_text)
     start_utc_dt = start_local_dt.astimezone(timezone.utc)
 
     # end time
-    end_date_text = input('Enter the end date (YYYY/MM/DD): ')
-    end_time_text = input('Enter the end time (HH:MM) in PST: ')
     end_local_dt = parse_local_datetime(end_date_text, end_time_text)
     end_utc_dt = end_local_dt.astimezone(timezone.utc)
 
-    #container_filter = LOADER_CONTAINER
-    container_filter = 'testcontainer'
+    container_filter = container_name.strip().lower()
 
     if end_utc_dt < start_utc_dt:
         raise ValueError('End datetime must be after start datetime.')
 
-    start_hour_utc = start_utc_dt.replace(minute=0, second=0, microsecond=0)
-    end_hour_utc = end_utc_dt.replace(minute=0, second=0, microsecond=0)
-
-    # /log/00/ is the change feed storage layout version
     cf_layout_version = 'log/00'
     container_client = ContainerClient.from_connection_string(CONN_STR, CHANGEFEED_CONTAINER)
 
     blobs_to_refresh = set()
+    blobs_deleted = set()
 
-    print('Listing changefeed blobs only for relevant UTC date prefixes...')
-    for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_hour_utc, end_hour_utc):
-        print(f'Checking prefix: {date_prefix}')
+    print('Listing changefeed blobs for UTC date prefixes...')
+    for date_prefix in iter_changefeed_date_prefixes(cf_layout_version, start_utc_dt, end_utc_dt):
         for blob in container_client.list_blobs(name_starts_with=date_prefix):
-
             if not blob.name.endswith('.avro'):
                 continue
-            blob_hour_utc = parse_changefeed_blob_datetime(blob.name, cf_layout_version)
-            if blob_hour_utc is None:
-                continue
-            # consider the hour valid range
-            if not (start_hour_utc <= blob_hour_utc <= end_hour_utc):
-                continue
-            
-            avro_file = blob.name
-            print(f'Processing changefeed file: {avro_file}')
 
-            # download the changefeed Avro log file
-            blob_client = container_client.get_blob_client(avro_file)
+            # download the changefeed Avro log file     
+            blob_client = container_client.get_blob_client(blob.name)
             avro_bytes = blob_client.download_blob().readall()
-        
+
             # make avro stream
             avro_stream = BytesIO(avro_bytes)
             reader = datafile.DataFileReader(avro_stream, io.DatumReader())
-            
+
             # parse the avro file
             for event in reader:
-                
-                # eventType filtering (only want BlobCreated and BlobPropertiesUpdated)
-                # also deal with BlobDeleted
                 eventType = event['eventType']
                 if eventType == 'BlobAsyncOperationInitiated':
-                    print('BlobAsyncOperationInitiated.')
                     continue
                 if not (eventType == 'BlobCreated' or eventType == 'BlobPropertiesUpdated' or eventType == 'BlobDeleted'):
                     continue
-                '''
-                if (eventType == 'BlobDeleted' or eventType == 'BlobSnapshotCreated' or
-                    eventType == 'BlobTierChanged' or eventType == 'Control'):
-                    continue
-                '''
 
                 event_time = datetime.fromisoformat(event['eventTime'].replace('Z', '+00:00'))
                 # consider the minute valid range
@@ -166,28 +123,32 @@ def main():
                 split_parts = container_and_blob.split('/blobs/', 1)
                 if len(split_parts) != 2:
                     continue
+
                 subject_blob_container_name, blob_name = split_parts
                 if not subject_blob_container_name or not blob_name:
                     continue
-                # if container filtering, check if this blob is even part of the container
-                if container_filter and subject_blob_container_name != container_filter:
+                if container_filter and subject_blob_container_name.lower() != container_filter:
                     continue
-                
+
                 # remove deleted blobs if it's in the list of blob to refresh
+                # otherwise, just log it to the blobs_deleted set
                 if eventType == 'BlobDeleted':
                     if blob_name in blobs_to_refresh:
                         blobs_to_refresh.remove(blob_name)
+                    else:
+                        blobs_deleted.add(blob_name)
                     continue
 
                 blobs_to_refresh.add(blob_name)
 
             reader.close()
-    '''
-    for blob_path in blobs_to_refresh:
-        print(blob_path)
-        print()
-    '''
 
+    print("===== BLOBS DELETED =====")
+    if blobs_deleted:
+        print(f"List of Blobs that were deleted: {list(blobs_deleted)}")
+    else:
+        print("No blobs were deleted in the inputted time frame.")
+        
     return blobs_to_refresh
 
 if __name__ == '__main__':
