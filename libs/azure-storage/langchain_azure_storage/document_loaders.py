@@ -315,7 +315,7 @@ class AzureBlobStorageLoader(BaseLoader):
         else:
             yield provided_credential
 
-    # use the changefeed parser to fetch a set of blob_names:str
+    # use the changefeed parser to fetch a set of blob_names: str
     def get_changed_blobs(self, loader_container_name: str) -> set[str]:
         return changefeed_blobs(loader_container_name, self.start_date, self.start_time, self.end_date, self.end_time)
 
