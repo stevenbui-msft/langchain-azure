@@ -24,6 +24,7 @@ to instrument your applications.
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import logging
 import os
@@ -66,6 +67,11 @@ _TRACING_DEPENDENCY_ERROR_MESSAGE = (
     "    pip install 'langchain-azure-ai[opentelemetry]'"
 )
 _DEFAULT_MAX_STATE_SIZE = 32768
+_PACKAGE_NAME = "langchain-azure-ai"
+try:
+    _PACKAGE_VERSION = importlib.metadata.version(_PACKAGE_NAME)
+except importlib.metadata.PackageNotFoundError:
+    _PACKAGE_VERSION = "0.0.0"
 
 try:  # pragma: no cover - imported lazily in production environments
     from azure.monitor.opentelemetry import configure_azure_monitor
@@ -208,6 +214,7 @@ class Attrs:
     EVALUATION_EXPLANATION = "gen_ai.evaluation.explanation"
     EVALUATION_RESULT_EVENT = "gen_ai.evaluation.result"
     AGENT_STATE = "gen_ai.agent.state"
+    AZURE_MONITOR_CUSTOM_EVENT_NAME = "microsoft.custom_event.name"
 
     # Optional vendor-specific attributes
     OPENAI_REQUEST_SERVICE_TIER = "openai.request.service_tier"
@@ -1022,6 +1029,38 @@ def _resolve_usage_from_llm_output(
     return None, None, None, None, False
 
 
+def _normalize_provider_name_value(value: Optional[str]) -> Optional[str]:
+    """Normalize user-supplied provider_name strings to OTel GenAI spec values.
+
+    Accepts friendly aliases like "azure_openai", "azure-openai", "openai" and
+    returns the canonical OTel gen_ai.provider.name value
+    (e.g., "azure.ai.openai").
+    """
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if not v:
+        return None
+    aliases = {
+        "azure_openai": "azure.ai.openai",
+        "azure-openai": "azure.ai.openai",
+        "azureopenai": "azure.ai.openai",
+        "azure": "azure.ai.openai",
+        "azure.openai": "azure.ai.openai",
+        "azure_ai_openai": "azure.ai.openai",
+        "azure_ai_inference": "azure.ai.inference",
+        "azure-ai-inference": "azure.ai.inference",
+        "aws_bedrock": "aws.bedrock",
+        "amazon_bedrock": "aws.bedrock",
+        "bedrock": "aws.bedrock",
+        "gcp_gemini": "gcp.gemini",
+        "gcp_vertex_ai": "gcp.vertex_ai",
+        "gcp_gen_ai": "gcp.gen_ai",
+        "ibm_watsonx_ai": "ibm.watsonx.ai",
+    }
+    return aliases.get(v, v)
+
+
 def _infer_provider_name(
     serialized: Optional[dict[str, Any]],
     metadata: Optional[dict[str, Any]],
@@ -1085,22 +1124,53 @@ def _infer_provider_name(
     return None
 
 
-def _infer_server_address(
+def _infer_base_url(
     serialized: Optional[dict[str, Any]],
     invocation_params: Optional[dict[str, Any]],
+    metadata: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     base_url = None
     if invocation_params:
         base_url = _first_non_empty(
             invocation_params.get("base_url"),
             invocation_params.get("openai_api_base"),
+            invocation_params.get("azure_endpoint"),
+            invocation_params.get("endpoint"),
+            invocation_params.get("endpoint_url"),
         )
     if not base_url and serialized:
-        kwargs = serialized.get("kwargs", {})
+        kwargs = serialized.get("kwargs") or {}
+        if not isinstance(kwargs, dict):
+            kwargs = {}
         base_url = _first_non_empty(
+            kwargs.get("base_url"),
             kwargs.get("openai_api_base"),
             kwargs.get("azure_endpoint"),
+            kwargs.get("endpoint"),
+            kwargs.get("endpoint_url"),
         )
+        if not base_url:
+            client_kwargs = kwargs.get("client_kwargs") or kwargs.get("client") or {}
+            if isinstance(client_kwargs, dict):
+                base_url = _first_non_empty(
+                    client_kwargs.get("base_url"),
+                    client_kwargs.get("azure_endpoint"),
+                )
+    if not base_url and metadata:
+        base_url = _first_non_empty(
+            metadata.get("ls_server_address"),
+            metadata.get("azure_endpoint"),
+            metadata.get("openai_api_base"),
+        )
+    return base_url if isinstance(base_url, str) and base_url else None
+
+
+def _infer_server_address(
+    serialized: Optional[dict[str, Any]],
+    invocation_params: Optional[dict[str, Any]],
+    metadata: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
+    base_url = _infer_base_url(serialized, invocation_params, metadata)
     if not base_url:
         return None
     try:
@@ -1115,19 +1185,9 @@ def _infer_server_address(
 def _infer_server_port(
     serialized: Optional[dict[str, Any]],
     invocation_params: Optional[dict[str, Any]],
+    metadata: Optional[dict[str, Any]] = None,
 ) -> Optional[int]:
-    base_url = None
-    if invocation_params:
-        base_url = _first_non_empty(
-            invocation_params.get("base_url"),
-            invocation_params.get("openai_api_base"),
-        )
-    if not base_url and serialized:
-        kwargs = serialized.get("kwargs", {})
-        base_url = _first_non_empty(
-            kwargs.get("openai_api_base"),
-            kwargs.get("azure_endpoint"),
-        )
+    base_url = _infer_base_url(serialized, invocation_params, metadata)
     if not base_url:
         return None
     try:
@@ -1302,7 +1362,7 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
         self._prepare_messages_fn = _prepare_messages_fn or _prepare_messages
         self._name = name
         self._default_agent_id = agent_id
-        self._default_provider_name = provider_name
+        self._default_provider_name = _normalize_provider_name_value(provider_name)
         self._content_recording = enable_content_recording
 
         if message_keys is None:
@@ -1641,9 +1701,9 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
 
                 if updated_total is not None:
                     parent_record.attributes[Attrs.USAGE_TOTAL_TOKENS] = updated_total
-                    parent_record.span.set_attribute(
-                        Attrs.USAGE_TOTAL_TOKENS, updated_total
-                    )
+                    # gen_ai.usage.total_tokens is not in the OTel GenAI spec registry;
+                    # kept only in internal attributes dict for bookkeeping/propagation,
+                    # not emitted to the span.
 
                 propagated_usage = parent_record.stash.setdefault(
                     "child_usage_propagated",
@@ -2245,9 +2305,10 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
                 input_tokens is not None or output_tokens is not None
             ):
                 total_tokens = (input_tokens or 0) + (output_tokens or 0)
-            if total_tokens is not None:
-                record.span.set_attribute(Attrs.USAGE_TOTAL_TOKENS, total_tokens)
-                record.attributes[Attrs.USAGE_TOTAL_TOKENS] = total_tokens
+            # gen_ai.usage.total_tokens is NOT in the OTel GenAI spec registry —
+            # only input_tokens and output_tokens are emitted as span attributes.
+            # total_tokens is still computed above and used internally for
+            # _accumulate_usage_to_agent_spans, but not set on the span.
             self._accumulate_usage_to_agent_spans(
                 record, input_tokens, output_tokens, total_tokens
             )
@@ -2256,6 +2317,12 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
         if "model_name" in llm_output:
             record.span.set_attribute(Attrs.RESPONSE_MODEL, llm_output["model_name"])
             record.attributes[Attrs.RESPONSE_MODEL] = llm_output["model_name"]
+            # If request.model was not set at start time (some LangChain providers
+            # don't expose it in serialized/invocation_params), fall back to the
+            # response model so the openai-based inference spec requirement is met.
+            if not record.attributes.get(Attrs.REQUEST_MODEL):
+                record.span.set_attribute(Attrs.REQUEST_MODEL, llm_output["model_name"])
+                record.attributes[Attrs.REQUEST_MODEL] = llm_output["model_name"]
             record.stash.pop("_metric_attrs_cache", None)
         if llm_output.get("system_fingerprint"):
             record.span.set_attribute(
@@ -2393,7 +2460,12 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
         tool_type = _tool_type_from_definition(serialized)
         if tool_type:
             attributes[Attrs.TOOL_TYPE] = tool_type
-        tool_id = (inputs or {}).get("tool_call_id") or metadata.get("tool_call_id")
+        tool_id = (
+            (inputs or {}).get("tool_call_id")
+            or metadata.get("tool_call_id")
+            or (kwargs.get("tool_call_id") if isinstance(kwargs, dict) else None)
+            or str(run_id)
+        )
         if tool_id:
             attributes[Attrs.TOOL_CALL_ID] = str(tool_id)
         if inputs:
@@ -2719,8 +2791,17 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
         model_name = _first_non_empty(
             invocation_params.get("model"),
             invocation_params.get("model_name"),
+            invocation_params.get("azure_deployment"),
+            invocation_params.get("deployment_name"),
+            invocation_params.get("deployment"),
             (serialized.get("kwargs", {}) or {}).get("model"),
             (serialized.get("kwargs", {}) or {}).get("model_name"),
+            (serialized.get("kwargs", {}) or {}).get("azure_deployment"),
+            (serialized.get("kwargs", {}) or {}).get("deployment_name"),
+            (serialized.get("kwargs", {}) or {}).get("deployment"),
+            metadata.get("ls_model_name"),
+            metadata.get("model_name"),
+            metadata.get("model"),
         )
         provider = _infer_provider_name(serialized, metadata, invocation_params)
         attributes: Dict[str, Any] = {
@@ -2783,10 +2864,10 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
             tool_definitions_json = _format_tool_definitions(tool_definitions)
             attributes[Attrs.TOOL_DEFINITIONS] = tool_definitions_json
 
-        server_address = _infer_server_address(serialized, invocation_params)
+        server_address = _infer_server_address(serialized, invocation_params, metadata)
         if server_address:
             attributes[Attrs.SERVER_ADDRESS] = server_address
-        server_port = _infer_server_port(serialized, invocation_params)
+        server_port = _infer_server_port(serialized, invocation_params, metadata)
         if server_port:
             attributes[Attrs.SERVER_PORT] = server_port
 
@@ -3053,13 +3134,24 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
         error_type: Optional[str] = None,
         run_id: Optional[Union[str, UUID]] = None,
     ) -> None:
-        """Emit a ``gen_ai.evaluation.result`` event on an agent span.
+        """Emit a ``gen_ai.evaluation.result`` event for an agent span.
 
-        The event is attached to the span identified by *run_id*.  When
-        *run_id* is ``None`` the method walks ``self._spans`` in reverse
-        insertion order and picks the most recent ``invoke_agent`` span
-        that is still open, which covers the common case where the
-        evaluation happens inside the same graph execution.
+        Per the `OpenTelemetry semantic conventions for GenAI events
+        <https://github.com/open-telemetry/semantic-conventions/blob/main/model/gen-ai/events.yaml>`_,
+        the event SHOULD be parented to the GenAI operation span being
+        evaluated.  This method activates the target span's context
+        before emitting, so the event is correctly correlated.
+
+        The event is emitted via the **OTel Logs/Events API** (not the
+        deprecated ``span.add_event()``), following the `OTel deprecation
+        of Span Events <https://opentelemetry.io/blog/2026/deprecating-span-events/>`_.
+        This ensures the event lands in the ``customEvents`` table in
+        Azure Monitor / Application Insights (via
+        ``AzureMonitorLogExporter``), where it is independently
+        queryable.
+
+        When the OTel Logs API is not available, falls back to the
+        legacy ``span.add_event()`` path.
 
         Args:
             evaluation_name: Name of the evaluation metric (e.g.
@@ -3112,10 +3204,64 @@ class AzureAIOpenTelemetryTracer(BaseCallbackHandler):
         if error_type is not None:
             attributes[Attrs.ERROR_TYPE] = error_type
 
-        span.add_event(Attrs.EVALUATION_RESULT_EVENT, attributes=attributes)
+        # Preferred path: emit via OTel Logs/Events API so the event
+        # lands in the customEvents table in Azure Monitor when an SDK
+        # LoggerProvider/exporter is configured. The span's context is
+        # activated so the log record is correlated to the correct
+        # trace/span.
+        emitted_via_logs = False
+        try:
+            import opentelemetry.trace as _otrace
+            from opentelemetry import context as _otel_ctx
+            from opentelemetry._logs import get_logger_provider
+
+            logger_provider = get_logger_provider()
+            # Only use Logs API if a real SDK LoggerProvider is configured
+            # (not the default no-op proxy)
+            try:
+                from opentelemetry.sdk._logs import LoggerProvider as _SdkLP
+
+                _is_real_provider = isinstance(logger_provider, _SdkLP)
+            except ImportError:
+                _is_real_provider = False
+
+            if _is_real_provider:
+                otel_logger = logger_provider.get_logger(
+                    "gen_ai.evaluation",
+                    version=_PACKAGE_VERSION,
+                )
+                log_attributes = dict(attributes)
+                log_attributes[Attrs.AZURE_MONITOR_CUSTOM_EVENT_NAME] = (
+                    Attrs.EVALUATION_RESULT_EVENT
+                )
+                # Activate the target span's context for correct parenting
+                ctx = _otrace.set_span_in_context(span)
+                token = _otel_ctx.attach(ctx)
+                try:
+                    otel_logger.emit(
+                        body=Attrs.EVALUATION_RESULT_EVENT,
+                        attributes=log_attributes,
+                        event_name=Attrs.EVALUATION_RESULT_EVENT,
+                    )
+                    emitted_via_logs = True
+                finally:
+                    _otel_ctx.detach(token)
+        except Exception:  # noqa: BLE001
+            LOGGER.debug(
+                "OTel Logs API unavailable, falling back to span.add_event()",
+                exc_info=True,
+            )
+
+        # Fallback: use legacy span.add_event() — the event is embedded
+        # in the span's data but may not be independently queryable in
+        # Azure Monitor.
+        if not emitted_via_logs:
+            span.add_event(Attrs.EVALUATION_RESULT_EVENT, attributes=attributes)
+
         LOGGER.debug(
-            "Emitted %s event on span: name=%s label=%s score=%s",
+            "Emitted %s event (via=%s): name=%s label=%s score=%s",
             Attrs.EVALUATION_RESULT_EVENT,
+            "logs_api" if emitted_via_logs else "span_event",
             evaluation_name,
             score_label,
             score_value,
